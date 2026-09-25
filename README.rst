@@ -35,49 +35,64 @@ Let's run a case to see how this works.
     .. code-block:: none
     
         $ pycart -f fins.json -I 7
-        Case Config/Run Directory                   Status  Iterations  Que CPU Time
-        ---- -------------------------------------- ------- ----------- --- --------
-        0    poweroff_d2+05_d4-15/m1.75a1.0r30.0 ---     /           .   
-          Group name: 'poweroff_d2+05.0d4-15.0' (index 4)
+        Case Config/Run Directory       Status  Iterations  Que CPU Time
+        ---- -------------------------- ------- ----------- --- --------
+        7    d2+05_d4-15/m1.75a1.0r30.0 ---     /           .
+          Group name: 'd2+05_d4-15' (index 4)
           Preparing surface triangulation...
-          Reading tri file(s) from root directory.
-             Writing triangulation: 'Components.tri'
-             Writing triangulation: 'Components.c.tri'
-         > autoInputs -r 8 -t Components.tri -maxR 10
+          Reading tri file(s):
+            inputs/bullet.tri
+            inputs/fin1.tri
+            inputs/fin2.tri
+            inputs/fin3.tri
+            inputs/fin4.tri
+         > autoInputs -r 8 -t Components.c.tri -maxR 10 -nDiv 4
+             (PWD = 'd2+05_d4-15/')
+             (STDOUT = 'autoInputs.out')
+             (STDERR = 'autoInputs.out')
          > intersect -i Components.tri -o Components.o.tri
-             Writing triangulation: 'Components.i.tri'
-         > cubes -pre preSpec.c3d.cntl -maxR 10 -reorder -a 10 -b 2
-         > mgPrep -n 3
+             (PWD = 'd2+05_d4-15/')
+             (STDOUT = 'intersect.out')
+             (STDERR = 'intersect.out')
+            Using PyVista for cleanup of 'Components.o.tri', tol=1.0e-06
+            Mapping CompIDs for intersected Components.o.tri -> Components.i.tri
         Using template for 'input.cntl' file
-             Starting case 'poweroff_d2+05.0d4-15.0/m1.75a1.0r30.0'.
-         > flowCart -his -clic -N 200 -y_is_spanwise -limiter 2 -T -cfl 1.1 -mg 3 -binaryIO -tm 0
-        
+             Starting case 'd2+05_d4-15/m1.75a1.0r30.0'
+         > flowCart -his -clic -N 200 -y_is_spanwise -limiter 2 -T -cfl 1.1 -mg 3 -no_fmg -binaryIO -tm 0
+             (PWD = 'd2+05_d4-15/m1.75a1.0r30.0/')
+             (STDOUT = 'flowCart.out')
+             (STDERR = 'flowCart.err')
+
         Submitted or ran 1 job(s).
-        
+
         ---=1,
 
 The output is pretty similar to a case without the fin deflections, but there
 are a few differences that are helpful to explain. The first is the name of the
-case, ``poweroff_d2+05_d4-15/m1.75a1.0r30.0``, which is especially different in
-that the name of the folder contains the fin deflections. That is all
-controlled in the pyCart input file ``fins.json``, and we will discuss it
-shortly. This example is configured with the fin deflections in the folder name
-because each set of cases with same fin positions can use the same mesh.
+case, ``d2+05_d4-15/m1.75a1.0r30.0``, which is especially different in that the
+name of the group folder contains the fin deflections. That is all controlled in
+the pyCart input file ``fins.json``, and we will discuss it shortly. This
+example is configured with the fin deflections in the folder name because each
+set of cases with same fin positions can use the same mesh, and keys marked
+``"Group": true`` are automatically folded into the group folder name.
 
-The next difference is that pyCart reports writing two triangulation files,
-``Components.tri`` and ``Components.c.tri``, instead of the usual
-``Components.i.tri``.  The reason for this pair of files is that
+The next difference is that pyCart builds the mesh from a series of
+triangulation files: ``Components.tri`` and ``Components.c.tri`` on input, and
+the final ``Components.i.tri`` on output.  The reason for the input pair is that
 ``intersect`` requires each body to have a single component ID, which destroys
 the surface component naming that is defined in our inputs (like splitting off
 the nose cap, body, and base of the bullet shape into separate components).  So
 ``Components.tri`` has only five components (the bullet shape and one for
 each fin) while ``Components.c.tri`` has seven components.
 
-Then ``intersect`` is run with the command run above, which generates
+Then ``intersect`` is run with the command shown above, which generates
 ``Components.o.tri``. This file also has only five component IDs, and these
 are mapped back into the original component ID numbering by comparing to
 ``Components.c.tri`` to generate the final triangulation
-``Components.i.tri`` with its seven component IDs.
+``Components.i.tri`` with its seven component IDs.  CAPE now also cleans up
+the raw ``intersect`` output with PyVista (eliminating tiny slivers and other
+artifacts; the cleaned file is written as ``Components.u.tri``) before
+mapping the component IDs.
 
 Otherwise, the solution proceeds in the same manner as a non-intersecting case. 
 Let's take a closer look at the ``"Mesh"`` and ``"RunMatrix"`` sections of the
@@ -86,8 +101,6 @@ pyCart input file ``fins.json`` to explain how this was set up.
     .. code-block:: javascript
     
         "Mesh": {
-            // Intersect
-            "intersect": true,
             // Surface triangulation
             "TriFile": [
                 "inputs/bullet.tri",
@@ -99,14 +112,16 @@ pyCart input file ``fins.json`` to explain how this was set up.
         },
         
 The ``"Mesh"`` section is relatively simple but contains a little bit more
-information than the default section. The individual water-tight volumes are
+information than the default section: *TriFile* is now a *list* of ``tri``
+files rather than a single file. The individual water-tight volumes are
 split into separate ``tri`` files, which provides pyCart two layers of
 information about how to split up the surface. Each ``tri`` file may contain
 multiple component IDs (in this case, only ``bullet.tri`` contains more
 than one component ID), but each file should contain a single closed surface.
-Then pyCart combines all these triangulations before intersecting them. If
-*intersect* is not set to ``true``, using multiple triangulation files has
-little effect.
+Then pyCart combines all these triangulations before intersecting them. The
+``"intersect": true`` switch that turns on this process now lives in the
+``"RunControl"`` section (not ``"Mesh"``); if it is not set to ``true``, using
+multiple triangulation files has little effect.
 
     .. code-block:: javascript
     
@@ -116,7 +131,6 @@ little effect.
             "Keys": ["Mach", "alpha_t", "phi", "d2", "d4"],
             "File": "inputs/matrix.csv",
             "GroupMesh": true,
-            "GroupPrefix": "poweroff",
             // Customized key definitions
             "Definitions": {
                 // Rotate fin 2
@@ -125,7 +139,7 @@ little effect.
                     "Type": "rotation",
                     "CompID": "fin2",
                     "Vector": [[7.2,0,0], [7.2,-1,0]],
-                    ++"Value": "float",
+                    "Value": "float",
                     "Format": "%+03i_"
                 },
                 // Rotate fin 4
@@ -148,8 +162,13 @@ parameter simply points to a file that contains the values of each input
 variable at which to run the configuration.
 
 Setting *GroupMesh* to true tells pyCart that the run matrix can be split into
-groups of cases such that each case in one group can use the same mesh, and
-*GroupPrefix* sets the base name of the group folders.
+groups of cases such that each case in one group can use the same mesh. The
+name of each group folder is then built from the keys whose definitions set
+*Group* to ``true``---here the two fin-rotation keys *d2* and *d4*, giving a
+group folder such as ``d2+05_d4-15``. (Earlier versions of this example used a
+*GroupPrefix* setting to name the group folders; that option is now legacy and
+is ignored, having been superseded by the *config* trajectory key and the
+*Group* flag on individual keys.)
 
 The last parameter, *Definitions*, is the interesting part of this example.
 Because *Mach*, *alpha_t*, and *phi* are such common input variables (called
